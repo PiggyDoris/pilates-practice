@@ -1,0 +1,35 @@
+'use strict';
+const search=document.getElementById('search'),apparatus=document.getElementById('apparatus'),part=document.getElementById('part'),list=document.getElementById('notes'),status=document.getElementById('status');let notes=[];
+const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n};
+function filteredNotes(){const q=search.value.trim().toLowerCase(),rows=notes.filter(n=>(!apparatus.value||n.apparatus===apparatus.value)&&(!part.value||n.part===part.value)&&(!q||[n.name,n.goal,...n.needs].join(' ').toLowerCase().includes(q)));return rows;}
+function render(){const rows=filteredNotes();list.hidden=practiceState.active;document.getElementById('practice').hidden=!practiceState.active;document.getElementById('browseMode').setAttribute('aria-pressed',String(!practiceState.active));document.getElementById('practiceMode').setAttribute('aria-pressed',String(practiceState.active));if(practiceState.active){renderPractice(rows);return}list.replaceChildren();status.textContent=`找到 ${rows.length} 項動作 · 點名稱展開說明`;for(const n of rows){const d=el('details',null,'note'),s=el('summary',n.name);s.append(el('small',`Part ${n.part} · ${n.apparatus}`));const body=el('div',null,'details');body.append(el('strong',['A','B'].includes(n.part)?'次數與彈簧':'主要訓練目標'),el('p',n.goal),el('strong',n.needs.length?'可考慮的功能需求':''));const tags=el('p');for(const need of n.needs)tags.append(el('span',need,'tag'));if(n.order)body.append(el('p',`教材順序：第 ${n.order} 項；下一個：${n.next}`));body.append(tags,el('p',n.caution,'hint'));d.append(s,body);list.append(d)}if(!rows.length)list.append(el('p','沒有符合的動作，請試試其他關鍵字或器械分類。'))}
+for(const input of [search,apparatus,part])input.addEventListener('input',()=>{practiceState.revealed=false;practiceState.index=0;practiceState.onlyRetry=false;render()});
+fetch('visitor-notes.json').then(r=>{if(!r.ok)throw Error('load');return r.json()}).then(data=>{notes=data;for(const app of [...new Set(notes.map(n=>n.apparatus))]){const o=el('option',app);o.value=app;apparatus.append(o)}render()}).catch(()=>{status.textContent='';document.getElementById('error').textContent='筆記暫時無法載入，請重新整理頁面。'});
+
+// Isolated in-memory practice: no localStorage, cloud writes, or private APIs.
+const practiceState={active:false,index:0,revealed:false,reverse:false,onlyRetry:false,exam:false,transition:false,results:new Map()};
+function practiceButton(text,fn,primary=false){const b=el('button',text,primary?'primary':'');b.addEventListener('click',fn);return b}
+function renderPractice(all){
+ const host=document.getElementById('practice');host.replaceChildren();
+ const rows=practiceState.onlyRetry?all.filter(n=>practiceState.results.get(n.id)==='retry'):all;
+ const known=all.filter(n=>practiceState.results.get(n.id)==='know').length,retry=all.filter(n=>practiceState.results.get(n.id)==='retry').length;
+ status.textContent=`練習範圍：${all.length} 項 · 已記熟 ${known} · 待複習 ${retry}`;
+ host.append(el('p','依上方器械、Part 與搜尋結果練習。成果只保留在本次頁面，重新整理即重設，不會寫入任何人的學習紀錄。','hint'));
+ const modes=el('div',null,'practice-actions');
+ const direction=practiceButton(practiceState.reverse?'線索 → 回想動作':'名稱 → 回想重點',()=>{practiceState.reverse=!practiceState.reverse;practiceState.revealed=false;render()});
+ const retryButton=practiceButton(practiceState.onlyRetry?'返回全部題目':`只練待複習（${retry}）`,()=>{practiceState.onlyRetry=!practiceState.onlyRetry;practiceState.index=0;practiceState.revealed=false;render()});
+ modes.append(direction,retryButton,practiceButton(practiceState.exam?'關閉作答練習':'考試作答練習',()=>{practiceState.exam=!practiceState.exam;practiceState.revealed=false;render()}),practiceButton(practiceState.transition?'返回動作回想':'動作轉換考試',()=>{practiceState.transition=!practiceState.transition;practiceState.revealed=false;practiceState.index=0;if(practiceState.transition){part.value='B';apparatus.value='Reformer';search.value='';practiceState.exam=true}render()}));host.append(modes);
+ if(!rows.length){host.append(el('p',practiceState.onlyRetry?'目前沒有待複習的題目。可以返回全部題目。':'目前篩選沒有動作，請調整搜尋或分類。'));return}
+ practiceState.index=Math.min(practiceState.index,rows.length-1);const n=rows[practiceState.index];
+ host.append(el('p',`第 ${practiceState.index+1} / ${rows.length} 題 · Part ${n.part} · ${n.apparatus}`,'practice-progress'));
+ host.append(el('h2',practiceState.transition?`${n.previous||'開始'} → ${n.name}`:practiceState.reverse?(['A','B'].includes(n.part)?`前一個動作：${n.previous||'尚未開始（回想第一個）'}。下一個是什麼？`:n.goal):n.name));host.append(el('p',practiceState.reverse?'想想有哪些動作能練習這個目標，再核對本題範例；可能有不只一個合理答案。':(['A','B'].includes(n.part)?'先回想 Setting、動作路徑、次數、彈簧（若適用）與下一個動作，再核對教材參考。':'先回想 Setting、動作路徑，再說出主要目標及適用需求。')));
+ if(practiceState.exam&&!practiceState.revealed){const label=el('label',practiceState.transition?'請寫出 Box、桿子、彈簧及其他需要調整的設定':'請寫下動作名稱、次數／彈簧或本題目標，再核對答案');if(practiceState.transition){const options={Box:['不使用 Box','長箱（縱放）','短箱（橫放）'],桿子:['不持桿／收妥','拿桿預備','持桿動作','依教材待確認'],彈簧:['1 條','2 條','2 條外側彈簧','3–4 條','待確認'],腳踏桿:['升起','放下'],頭枕:['升起','放下']};for(const [title,choices]of Object.entries(options)){const l=el('label',title),select=el('select');select.setAttribute('aria-label',title);select.append(el('option','請選擇'));for(const choice of choices)select.append(el('option',choice));l.append(select);host.append(l)}}const field=el('textarea');field.rows=5;field.style='width:100%;padding:12px;font:inherit';label.append(field);host.append(label)}
+ if(practiceState.revealed){const answer=el('div',null,'answer');if(practiceState.exam&&practiceState.written)answer.append(el('strong','你的作答'),el('p',practiceState.written));answer.append(el('strong','本題參考動作'),el('p',n.name),el('strong',['A','B'].includes(n.part)?'次數與彈簧':'主要訓練目標'),el('p',n.goal),el('strong',n.needs.length?'可考慮的功能需求':''),el('p',n.needs.join('、')),el('p',n.caution,'hint'));if(n.order)answer.append(el('strong','教材順序'),el('p',`第 ${n.order} 項；下一個：${n.next}`));if(practiceState.transition&&n.equipment){answer.append(el('strong','轉換核對'),el('p',n.transition),el('p',n.equipment.source,'hint'),el('p','先讓滑床停穩，確認學生安全位置後再調整器械；此頁是記憶核對，不取代現場器械操作訓練。','hint'))}host.append(answer)}
+ const actions=el('div',null,'practice-actions');
+ const next=()=>{practiceState.index=(practiceState.index+1)%rows.length;practiceState.revealed=false;render()};
+ if(!practiceState.revealed)actions.append(practiceButton('顯示答案',()=>{practiceState.written=[...Array.from(host.querySelectorAll?.('select')||[]).map(x=>x.getAttribute('aria-label')+'：'+x.value),host.querySelector?.('textarea')?.value||''].join('；');practiceState.revealed=true;render()},true));
+ else for(const [value,label] of [['know','我記住了'],['retry','還要複習']])actions.append(practiceButton(label,()=>{practiceState.results.set(n.id,value);if(practiceState.onlyRetry){practiceState.revealed=false;render()}else next()},value==='know'));
+ actions.append(practiceButton('跳過／下一題',next));host.append(actions);
+}
+document.getElementById('browseMode').addEventListener('click',()=>{practiceState.active=false;render()});
+document.getElementById('practiceMode').addEventListener('click',()=>{practiceState.active=true;practiceState.revealed=false;render()});
